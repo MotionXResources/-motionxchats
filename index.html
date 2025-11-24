@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageCircle, Upload, LogOut, Users, Image, FileText, X } from 'lucide-react';
+import { MessageCircle, Upload, LogOut, FileText, X } from 'lucide-react';
 
 export default function EditorPlatform() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -9,9 +9,9 @@ export default function EditorPlatform() {
   const [chatMessage, setChatMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [assets, setAssets] = useState([]);
-  const [users, setUsers] = useState([]);
   const chatEndRef = useRef(null);
 
+  // Load data from localStorage on mount and when user logs in
   useEffect(() => {
     if (currentUser) {
       loadData();
@@ -22,82 +22,62 @@ export default function EditorPlatform() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const loadData = async () => {
+  const loadData = () => {
     try {
-      const [messagesResult, assetsResult, usersResult] = await Promise.all([
-        window.storage.list('msg:', true).catch(() => ({ keys: [] })),
-        window.storage.list('asset:', true).catch(() => ({ keys: [] })),
-        window.storage.get('users', true).catch(() => null)
-      ]);
-
-      const loadedMessages = await Promise.all(
-        (messagesResult.keys || []).map(async key => {
-          const result = await window.storage.get(key, true);
-          return result ? JSON.parse(result.value) : null;
-        })
-      );
-      setMessages(loadedMessages.filter(m => m).sort((a, b) => a.timestamp - b.timestamp));
-
-      const loadedAssets = await Promise.all(
-        (assetsResult.keys || []).map(async key => {
-          const result = await window.storage.get(key, true);
-          return result ? JSON.parse(result.value) : null;
-        })
-      );
-      setAssets(loadedAssets.filter(a => a).sort((a, b) => b.timestamp - a.timestamp));
-
-      if (usersResult) {
-        setUsers(JSON.parse(usersResult.value));
+      const storedMessages = localStorage.getItem('messages');
+      const storedAssets = localStorage.getItem('assets');
+      
+      if (storedMessages) {
+        setMessages(JSON.parse(storedMessages));
+      }
+      
+      if (storedAssets) {
+        setAssets(JSON.parse(storedAssets));
       }
     } catch (error) {
       console.error('Error loading data:', error);
     }
   };
 
-  const handleLogin = async () => {
+  const handleLogin = () => {
+    if (!loginForm.username || !loginForm.password) {
+      alert('Please enter both username and password');
+      return;
+    }
+
     if (registerMode) {
-      try {
-        const usersResult = await window.storage.get('users', true).catch(() => null);
-        const existingUsers = usersResult ? JSON.parse(usersResult.value) : [];
-        
-        if (existingUsers.find(u => u.username === loginForm.username)) {
-          alert('Username already exists');
-          return;
-        }
-
-        const newUser = { username: loginForm.username, password: loginForm.password };
-        const updatedUsers = [...existingUsers, newUser];
-        
-        await window.storage.set('users', JSON.stringify(updatedUsers), true);
-        setCurrentUser(newUser);
-        setLoginForm({ username: '', password: '' });
-      } catch (error) {
-        console.error('Registration error:', error);
-        alert('Registration failed');
+      const storedUsers = localStorage.getItem('users');
+      const existingUsers = storedUsers ? JSON.parse(storedUsers) : [];
+      
+      if (existingUsers.find(u => u.username === loginForm.username)) {
+        alert('Username already exists');
+        return;
       }
-    } else {
-      try {
-        const usersResult = await window.storage.get('users', true).catch(() => null);
-        const existingUsers = usersResult ? JSON.parse(usersResult.value) : [];
-        
-        const user = existingUsers.find(
-          u => u.username === loginForm.username && u.password === loginForm.password
-        );
 
-        if (user) {
-          setCurrentUser(user);
-          setLoginForm({ username: '', password: '' });
-        } else {
-          alert('Invalid credentials');
-        }
-      } catch (error) {
-        console.error('Login error:', error);
-        alert('Login failed');
+      const newUser = { username: loginForm.username, password: loginForm.password };
+      const updatedUsers = [...existingUsers, newUser];
+      
+      localStorage.setItem('users', JSON.stringify(updatedUsers));
+      setCurrentUser(newUser);
+      setLoginForm({ username: '', password: '' });
+    } else {
+      const storedUsers = localStorage.getItem('users');
+      const existingUsers = storedUsers ? JSON.parse(storedUsers) : [];
+      
+      const user = existingUsers.find(
+        u => u.username === loginForm.username && u.password === loginForm.password
+      );
+
+      if (user) {
+        setCurrentUser(user);
+        setLoginForm({ username: '', password: '' });
+      } else {
+        alert('Invalid credentials');
       }
     }
   };
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = () => {
     if (!chatMessage.trim()) return;
 
     const newMessage = {
@@ -107,22 +87,24 @@ export default function EditorPlatform() {
       timestamp: Date.now()
     };
 
-    try {
-      await window.storage.set(`msg:${newMessage.id}`, JSON.stringify(newMessage), true);
-      setMessages([...messages, newMessage]);
-      setChatMessage('');
-    } catch (error) {
-      console.error('Error sending message:', error);
-      alert('Failed to send message');
-    }
+    const updatedMessages = [...messages, newMessage];
+    setMessages(updatedMessages);
+    localStorage.setItem('messages', JSON.stringify(updatedMessages));
+    setChatMessage('');
   };
 
-  const handleFileUpload = async (e) => {
+  const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
+    // Check file size (limit to 4MB for localStorage)
+    if (file.size > 4 * 1024 * 1024) {
+      alert('File too large. Please choose a file under 4MB.');
+      return;
+    }
+
     const reader = new FileReader();
-    reader.onload = async (event) => {
+    reader.onload = (event) => {
       const asset = {
         id: Date.now(),
         name: file.name,
@@ -133,24 +115,17 @@ export default function EditorPlatform() {
         timestamp: Date.now()
       };
 
-      try {
-        await window.storage.set(`asset:${asset.id}`, JSON.stringify(asset), true);
-        setAssets([asset, ...assets]);
-      } catch (error) {
-        console.error('Error uploading asset:', error);
-        alert('Failed to upload asset');
-      }
+      const updatedAssets = [asset, ...assets];
+      setAssets(updatedAssets);
+      localStorage.setItem('assets', JSON.stringify(updatedAssets));
     };
     reader.readAsDataURL(file);
   };
 
-  const handleDeleteAsset = async (assetId) => {
-    try {
-      await window.storage.delete(`asset:${assetId}`, true);
-      setAssets(assets.filter(a => a.id !== assetId));
-    } catch (error) {
-      console.error('Error deleting asset:', error);
-    }
+  const handleDeleteAsset = (assetId) => {
+    const updatedAssets = assets.filter(a => a.id !== assetId);
+    setAssets(updatedAssets);
+    localStorage.setItem('assets', JSON.stringify(updatedAssets));
   };
 
   const formatFileSize = (bytes) => {
@@ -278,6 +253,11 @@ export default function EditorPlatform() {
             {activeTab === 'chat' && (
               <div className="flex flex-col h-[600px]">
                 <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                  {messages.length === 0 && (
+                    <div className="text-center text-gray-500 py-12">
+                      No messages yet. Start a conversation!
+                    </div>
+                  )}
                   {messages.map(msg => (
                     <div
                       key={msg.id}
@@ -326,7 +306,7 @@ export default function EditorPlatform() {
                 <div className="mb-6">
                   <label className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition cursor-pointer">
                     <Upload size={20} />
-                    Upload Asset
+                    Upload Asset (Max 4MB)
                     <input
                       type="file"
                       onChange={handleFileUpload}
