@@ -1,0 +1,393 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { MessageCircle, Upload, LogOut, Users, Image, FileText, X } from 'lucide-react';
+
+export default function EditorPlatform() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [registerMode, setRegisterMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('chat');
+  const [chatMessage, setChatMessage] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [assets, setAssets] = useState([]);
+  const [users, setUsers] = useState([]);
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    if (currentUser) {
+      loadData();
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const loadData = async () => {
+    try {
+      const [messagesResult, assetsResult, usersResult] = await Promise.all([
+        window.storage.list('msg:', true).catch(() => ({ keys: [] })),
+        window.storage.list('asset:', true).catch(() => ({ keys: [] })),
+        window.storage.get('users', true).catch(() => null)
+      ]);
+
+      const loadedMessages = await Promise.all(
+        (messagesResult.keys || []).map(async key => {
+          const result = await window.storage.get(key, true);
+          return result ? JSON.parse(result.value) : null;
+        })
+      );
+      setMessages(loadedMessages.filter(m => m).sort((a, b) => a.timestamp - b.timestamp));
+
+      const loadedAssets = await Promise.all(
+        (assetsResult.keys || []).map(async key => {
+          const result = await window.storage.get(key, true);
+          return result ? JSON.parse(result.value) : null;
+        })
+      );
+      setAssets(loadedAssets.filter(a => a).sort((a, b) => b.timestamp - a.timestamp));
+
+      if (usersResult) {
+        setUsers(JSON.parse(usersResult.value));
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (registerMode) {
+      try {
+        const usersResult = await window.storage.get('users', true).catch(() => null);
+        const existingUsers = usersResult ? JSON.parse(usersResult.value) : [];
+        
+        if (existingUsers.find(u => u.username === loginForm.username)) {
+          alert('Username already exists');
+          return;
+        }
+
+        const newUser = { username: loginForm.username, password: loginForm.password };
+        const updatedUsers = [...existingUsers, newUser];
+        
+        await window.storage.set('users', JSON.stringify(updatedUsers), true);
+        setCurrentUser(newUser);
+        setLoginForm({ username: '', password: '' });
+      } catch (error) {
+        console.error('Registration error:', error);
+        alert('Registration failed');
+      }
+    } else {
+      try {
+        const usersResult = await window.storage.get('users', true).catch(() => null);
+        const existingUsers = usersResult ? JSON.parse(usersResult.value) : [];
+        
+        const user = existingUsers.find(
+          u => u.username === loginForm.username && u.password === loginForm.password
+        );
+
+        if (user) {
+          setCurrentUser(user);
+          setLoginForm({ username: '', password: '' });
+        } else {
+          alert('Invalid credentials');
+        }
+      } catch (error) {
+        console.error('Login error:', error);
+        alert('Login failed');
+      }
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!chatMessage.trim()) return;
+
+    const newMessage = {
+      id: Date.now(),
+      user: currentUser.username,
+      text: chatMessage,
+      timestamp: Date.now()
+    };
+
+    try {
+      await window.storage.set(`msg:${newMessage.id}`, JSON.stringify(newMessage), true);
+      setMessages([...messages, newMessage]);
+      setChatMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert('Failed to send message');
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const asset = {
+        id: Date.now(),
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data: event.target.result,
+        uploadedBy: currentUser.username,
+        timestamp: Date.now()
+      };
+
+      try {
+        await window.storage.set(`asset:${asset.id}`, JSON.stringify(asset), true);
+        setAssets([asset, ...assets]);
+      } catch (error) {
+        console.error('Error uploading asset:', error);
+        alert('Failed to upload asset');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDeleteAsset = async (assetId) => {
+    try {
+      await window.storage.delete(`asset:${assetId}`, true);
+      setAssets(assets.filter(a => a.id !== assetId));
+    } catch (error) {
+      console.error('Error deleting asset:', error);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const handleKeyPress = (e, action) => {
+    if (e.key === 'Enter') {
+      action();
+    }
+  };
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">Editor Platform</h1>
+            <p className="text-gray-600">Collaborate, chat, and share assets</p>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Username
+              </label>
+              <input
+                type="text"
+                value={loginForm.username}
+                onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                onKeyPress={(e) => handleKeyPress(e, handleLogin)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                value={loginForm.password}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                onKeyPress={(e) => handleKeyPress(e, handleLogin)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            <button
+              onClick={handleLogin}
+              className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition"
+            >
+              {registerMode ? 'Register' : 'Login'}
+            </button>
+          </div>
+          
+          <div className="mt-4 text-center">
+            <button
+              onClick={() => setRegisterMode(!registerMode)}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              {registerMode ? 'Already have an account? Login' : 'Need an account? Register'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-800">Editor Platform</h1>
+          <div className="flex items-center gap-4">
+            <span className="text-gray-600">Welcome, {currentUser.username}</span>
+            <button
+              onClick={() => setCurrentUser(null)}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            >
+              <LogOut size={18} />
+              Logout
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto p-4">
+        <div className="bg-white rounded-lg shadow-sm border">
+          <div className="border-b">
+            <div className="flex">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`flex items-center gap-2 px-6 py-3 font-medium ${
+                  activeTab === 'chat'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                <MessageCircle size={20} />
+                Chat
+              </button>
+              <button
+                onClick={() => setActiveTab('assets')}
+                className={`flex items-center gap-2 px-6 py-3 font-medium ${
+                  activeTab === 'assets'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                <Upload size={20} />
+                Assets
+              </button>
+            </div>
+          </div>
+
+          <div className="p-6">
+            {activeTab === 'chat' && (
+              <div className="flex flex-col h-[600px]">
+                <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                  {messages.map(msg => (
+                    <div
+                      key={msg.id}
+                      className={`flex ${
+                        msg.user === currentUser.username ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                      <div
+                        className={`max-w-sm px-4 py-2 rounded-lg ${
+                          msg.user === currentUser.username
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-200 text-gray-800'
+                        }`}
+                      >
+                        <div className="text-xs opacity-75 mb-1">
+                          {msg.user} · {formatTime(msg.timestamp)}
+                        </div>
+                        <div>{msg.text}</div>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatMessage}
+                    onChange={(e) => setChatMessage(e.target.value)}
+                    onKeyPress={(e) => handleKeyPress(e, handleSendMessage)}
+                    placeholder="Type a message..."
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleSendMessage}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'assets' && (
+              <div>
+                <div className="mb-6">
+                  <label className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition cursor-pointer">
+                    <Upload size={20} />
+                    Upload Asset
+                    <input
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {assets.map(asset => (
+                    <div key={asset.id} className="border rounded-lg p-4 hover:shadow-md transition">
+                      {asset.type.startsWith('image/') ? (
+                        <div className="mb-3 rounded overflow-hidden bg-gray-100">
+                          <img
+                            src={asset.data}
+                            alt={asset.name}
+                            className="w-full h-48 object-cover"
+                          />
+                        </div>
+                      ) : (
+                        <div className="mb-3 h-48 bg-gray-100 rounded flex items-center justify-center">
+                          <FileText size={48} className="text-gray-400" />
+                        </div>
+                      )}
+                      
+                      <div className="space-y-2">
+                        <h3 className="font-medium text-gray-800 truncate">{asset.name}</h3>
+                        <div className="text-xs text-gray-600">
+                          <div>{formatFileSize(asset.size)}</div>
+                          <div>By {asset.uploadedBy}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <a
+                            href={asset.data}
+                            download={asset.name}
+                            className="flex-1 text-center px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition"
+                          >
+                            Download
+                          </a>
+                          <button
+                            onClick={() => handleDeleteAsset(asset.id)}
+                            className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {assets.length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    No assets uploaded yet. Upload your first asset above!
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
